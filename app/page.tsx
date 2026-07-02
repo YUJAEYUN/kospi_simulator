@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import IndexCard from "@/components/IndexCard";
 import OverridesPanel from "@/components/OverridesPanel";
+import Spinner from "@/components/Spinner";
 import StockExplorer from "@/components/StockExplorer";
 import type { KospiSnapshot } from "@/lib/kospi";
 import { simulateIndex } from "@/lib/kospi";
@@ -86,8 +87,9 @@ export default function Home() {
         <button
           onClick={() => fetchSnapshot(true)}
           disabled={loading}
-          className="min-h-11 shrink-0 rounded-full bg-[#3182F6] px-4 text-sm font-semibold text-white shadow-sm transition active:scale-95 disabled:opacity-60"
+          className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-[#3182F6] px-4 text-sm font-semibold text-white shadow-sm transition active:scale-95 disabled:opacity-60"
         >
+          {loading && <Spinner className="h-4 w-4" />}
           {loading ? "불러오는 중…" : snapshot ? "최신화" : "다시 시도"}
         </button>
       </header>
@@ -96,6 +98,15 @@ export default function Home() {
         {error && (
           <div className="rounded-xl bg-[#FEF0F0] px-4 py-3 text-sm text-[#F04452]">
             {error}
+          </div>
+        )}
+
+        {!snapshot && loading && (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl bg-white p-10 text-center shadow-sm">
+            <Spinner className="h-8 w-8 text-[#3182F6]" />
+            <p className="text-sm text-[#8B95A1]">
+              코스피 데이터를 불러오는 중입니다…
+            </p>
           </div>
         )}
 

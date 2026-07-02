@@ -108,18 +108,38 @@ export async function fetchLatestMarketIndex(): Promise<{
   searchTrail: IndexSearchAttempt[];
 }> {
   const today = new Date();
-  const searchTrail: IndexSearchAttempt[] = [];
-
-  for (let offset = 0; offset < MAX_DATE_LOOKBACK_DAYS; offset++) {
-    const day = new Date(today);
-    day.setDate(day.getDate() - offset);
-    const basDt = formatBasDt(day);
-
-    const { clpr, totalCount } = await findKospiIndexOnDate(basDt);
-    searchTrail.push({ basDt, totalCount, found: clpr != null });
-    if (clpr != null) {
-      return { basDt, clpr, searchTrail };
+  const candidateDates = Array.from(
+    { length: MAX_DATE_LOOKBACK_DAYS },
+    (_, offset) => {
+      const day = new Date(today);
+      day.setDate(day.getDate() - offset);
+      return formatBasDt(day);
     }
+  );
+
+  // Query every candidate date at once instead of waiting on each one in
+  // turn — a sequential 10-day lookback was the single biggest source of
+  // latency when recent dates aren't published yet.
+  const results = await Promise.all(
+    candidateDates.map(async (basDt) => {
+      const { clpr, totalCount } = await findKospiIndexOnDate(basDt);
+      return { basDt, clpr, totalCount };
+    })
+  );
+
+  const searchTrail: IndexSearchAttempt[] = results.map(
+    ({ basDt, totalCount, clpr }) => ({
+      basDt,
+      totalCount,
+      found: clpr != null,
+    })
+  );
+
+  // `results` preserves candidateDates order (today first), so the first
+  // match found is still the most recent available date.
+  const match = results.find((r) => r.clpr != null);
+  if (match) {
+    return { basDt: match.basDt, clpr: match.clpr as number, searchTrail };
   }
 
   throw new DataGoKrError(
@@ -163,21 +183,33 @@ async function findKospiIndexOnDate(
 }
 
 export async function fetchAllKospiStocks(basDt: string): Promise<StockRow[]> {
-  const collected: Record<string, unknown>[] = [];
-  let totalCount = Infinity;
-  let pageNo = 1;
+  // Page 1 tells us totalCount, so the remaining pages can be requested
+  // concurrently instead of one-at-a-time.
+  const first = await callDataGoKr(STOCK_PRICE_URL, {
+    basDt,
+    numOfRows: String(PAGE_SIZE),
+    pageNo: "1",
+  });
 
-  while (collected.length < totalCount && pageNo <= MAX_PAGES) {
-    const { items, totalCount: tc } = await callDataGoKr(STOCK_PRICE_URL, {
-      basDt,
-      numOfRows: String(PAGE_SIZE),
-      pageNo: String(pageNo),
-    });
-    totalCount = tc;
-    if (items.length === 0) break;
-    collected.push(...items);
-    pageNo++;
-  }
+  const totalPages = Math.min(
+    Math.ceil(first.totalCount / PAGE_SIZE) || 0,
+    MAX_PAGES
+  );
+
+  const restPages = await Promise.all(
+    Array.from({ length: Math.max(totalPages - 1, 0) }, (_, i) =>
+      callDataGoKr(STOCK_PRICE_URL, {
+        basDt,
+        numOfRows: String(PAGE_SIZE),
+        pageNo: String(i + 2),
+      })
+    )
+  );
+
+  const collected = [
+    ...first.items,
+    ...restPages.flatMap((page) => page.items),
+  ];
 
   return collected
     .filter((item) => item.mrktCtg === "KOSPI")
