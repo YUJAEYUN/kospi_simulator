@@ -10,7 +10,11 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const { basDt, clpr: actualIndex } = await fetchLatestMarketIndex();
+    const {
+      basDt,
+      clpr: actualIndex,
+      searchTrail,
+    } = await fetchLatestMarketIndex();
     const stocks = await fetchAllKospiStocks(basDt);
 
     if (stocks.length === 0) {
@@ -33,7 +37,7 @@ export async function GET() {
       fetchedAt: new Date().toISOString(),
     };
 
-    return NextResponse.json(snapshot);
+    return NextResponse.json({ ...snapshot, searchTrail });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.";
