@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import IndexCard from "@/components/IndexCard";
 import OverridesPanel from "@/components/OverridesPanel";
 import StockExplorer from "@/components/StockExplorer";
@@ -14,11 +14,17 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchSnapshot = useCallback(async () => {
+  // `force=false` serves whatever the server already has cached (near
+  // instant, no data.go.kr call) so most visitors never need to press the
+  // button. The refresh button passes force=true to actually re-fetch from
+  // data.go.kr and update that shared cache for everyone.
+  const fetchSnapshot = useCallback(async (force: boolean) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/kospi", { cache: "no-store" });
+      const res = await fetch(`/api/kospi${force ? "?refresh=1" : ""}`, {
+        cache: "no-store",
+      });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error ?? "데이터를 불러오지 못했습니다.");
@@ -33,6 +39,10 @@ export default function Home() {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    fetchSnapshot(false);
+  }, [fetchSnapshot]);
 
   const handleChangeOverride = useCallback(
     (code: string, price: number | null) => {
@@ -74,11 +84,11 @@ export default function Home() {
           </p>
         </div>
         <button
-          onClick={fetchSnapshot}
+          onClick={() => fetchSnapshot(true)}
           disabled={loading}
           className="min-h-11 shrink-0 rounded-full bg-[#3182F6] px-4 text-sm font-semibold text-white shadow-sm transition active:scale-95 disabled:opacity-60"
         >
-          {loading ? "불러오는 중…" : snapshot ? "최신화" : "데이터 불러오기"}
+          {loading ? "불러오는 중…" : snapshot ? "최신화" : "다시 시도"}
         </button>
       </header>
 
@@ -89,10 +99,10 @@ export default function Home() {
           </div>
         )}
 
-        {!snapshot && !loading && (
+        {!snapshot && !loading && error && (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl bg-white p-10 text-center shadow-sm">
             <p className="text-sm text-[#8B95A1]">
-              상단 버튼을 눌러 전일 종가 기준 코스피 데이터를 불러오세요.
+              데이터를 불러오지 못했습니다. 버튼을 눌러 다시 시도해주세요.
             </p>
           </div>
         )}
