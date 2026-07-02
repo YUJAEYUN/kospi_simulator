@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { StockRow } from "@/lib/dataGoKr";
 import { formatPrice, formatWon } from "@/lib/format";
 
@@ -10,8 +10,7 @@ interface Props {
   onChangeOverride: (code: string, price: number | null) => void;
 }
 
-const DEFAULT_VISIBLE = 30;
-const SEARCH_LIMIT = 50;
+const PAGE_SIZE = 30;
 
 export default function StockExplorer({
   stocks,
@@ -19,36 +18,65 @@ export default function StockExplorer({
   onChangeOverride,
 }: Props) {
   const [query, setQuery] = useState("");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const sorted = useMemo(
     () => [...stocks].sort((a, b) => b.marketCap - a.marketCap),
     [stocks]
   );
 
-  const visible = useMemo(() => {
+  const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return sorted.slice(0, DEFAULT_VISIBLE);
-    return sorted
-      .filter((s) => s.name.toLowerCase().includes(q) || s.code.includes(q))
-      .slice(0, SEARCH_LIMIT);
+    if (!q) return sorted;
+    return sorted.filter(
+      (s) => s.name.toLowerCase().includes(q) || s.code.includes(q)
+    );
   }, [sorted, query]);
+
+  // Start a fresh page whenever the search term changes.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [query]);
+
+  const visible = filtered.slice(0, visibleCount);
+  const hasMore = visibleCount < filtered.length;
+
+  useEffect(() => {
+    if (!hasMore) return;
+    const node = sentinelRef.current;
+    if (!node) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleCount((v) => v + PAGE_SIZE);
+        }
+      },
+      { rootMargin: "800px 0px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore]);
 
   return (
     <div className="rounded-2xl bg-white p-5 shadow-sm">
       <input
         type="text"
+        inputMode="search"
+        autoComplete="off"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="종목명 또는 종목코드로 검색"
-        className="w-full rounded-xl bg-[#F2F4F6] px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#3182F6]"
+        className="w-full rounded-xl bg-[#F2F4F6] px-4 py-3 text-base outline-none focus:ring-2 focus:ring-[#3182F6]"
       />
 
-      {!query && (
-        <p className="mb-1 mt-3 text-xs text-[#8B95A1]">
-          시가총액 상위 {DEFAULT_VISIBLE}개 종목
-        </p>
-      )}
-      {query && visible.length === 0 && (
+      <p className="mb-1 mt-3 text-xs text-[#8B95A1]">
+        {query
+          ? `검색 결과 ${filtered.length}개 중 ${visible.length}개 표시`
+          : `시가총액순 전종목 ${filtered.length}개 중 ${visible.length}개 표시`}
+      </p>
+      {filtered.length === 0 && (
         <p className="py-8 text-center text-sm text-[#8B95A1]">
           검색 결과가 없습니다.
         </p>
@@ -64,6 +92,15 @@ export default function StockExplorer({
           />
         ))}
       </ul>
+
+      {hasMore && (
+        <div
+          ref={sentinelRef}
+          className="py-4 text-center text-xs text-[#8B95A1]"
+        >
+          더 불러오는 중…
+        </div>
+      )}
     </div>
   );
 }
@@ -118,6 +155,7 @@ function StockRowItem({
           <input
             autoFocus
             type="number"
+            inputMode="numeric"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commit}
@@ -128,7 +166,7 @@ function StockRowItem({
                 setEditing(false);
               }
             }}
-            className="w-28 rounded-lg border border-[#3182F6] px-2 py-1.5 text-right text-sm outline-none"
+            className="w-28 rounded-lg border border-[#3182F6] px-2 py-2 text-right text-base outline-none"
           />
         ) : (
           <button
@@ -136,7 +174,7 @@ function StockRowItem({
               setDraft(String(effectivePrice));
               setEditing(true);
             }}
-            className={`rounded-lg px-2 py-1.5 text-right text-sm font-semibold transition ${
+            className={`min-h-11 rounded-lg px-2 py-2 text-right text-sm font-semibold transition ${
               isOverridden
                 ? "bg-[#E8F3FF] text-[#1B64DA]"
                 : "text-[#191F28] hover:bg-[#F2F4F6]"

@@ -96,33 +96,49 @@ async function callDataGoKr(
   return { totalCount, items: items as Record<string, unknown>[] };
 }
 
+export interface IndexSearchAttempt {
+  basDt: string;
+  totalCount: number;
+  found: boolean;
+}
+
 export async function fetchLatestMarketIndex(): Promise<{
   basDt: string;
   clpr: number;
+  searchTrail: IndexSearchAttempt[];
 }> {
   const today = new Date();
+  const searchTrail: IndexSearchAttempt[] = [];
+
   for (let offset = 0; offset < MAX_DATE_LOOKBACK_DAYS; offset++) {
     const day = new Date(today);
     day.setDate(day.getDate() - offset);
     const basDt = formatBasDt(day);
 
-    const clpr = await findKospiIndexOnDate(basDt);
+    const { clpr, totalCount } = await findKospiIndexOnDate(basDt);
+    searchTrail.push({ basDt, totalCount, found: clpr != null });
     if (clpr != null) {
-      return { basDt, clpr };
+      return { basDt, clpr, searchTrail };
     }
   }
 
   throw new DataGoKrError(
-    `최근 ${MAX_DATE_LOOKBACK_DAYS}일 내 코스피 지수 데이터를 찾을 수 없습니다.`
+    `최근 ${MAX_DATE_LOOKBACK_DAYS}일 내 코스피 지수 데이터를 찾을 수 없습니다. ` +
+      `(조회 내역: ${searchTrail
+        .map((a) => `${a.basDt}=${a.totalCount}건`)
+        .join(", ")})`
   );
 }
 
 // GetMarketIndexInfoService returns every KRX index for the date (KOSPI,
 // KOSDAQ, sector/style indices, ...), not just KOSPI, so the composite
 // index row can be well past the first page.
-async function findKospiIndexOnDate(basDt: string): Promise<number | null> {
+async function findKospiIndexOnDate(
+  basDt: string
+): Promise<{ clpr: number | null; totalCount: number }> {
   let pageNo = 1;
   let totalCount = Infinity;
+  let sawTotalCount = 0;
 
   while ((pageNo - 1) * PAGE_SIZE < totalCount && pageNo <= MAX_INDEX_PAGES) {
     const { items, totalCount: tc } = await callDataGoKr(MARKET_INDEX_URL, {
@@ -131,18 +147,19 @@ async function findKospiIndexOnDate(basDt: string): Promise<number | null> {
       pageNo: String(pageNo),
     });
     totalCount = tc;
+    sawTotalCount = tc;
     if (items.length === 0) break;
 
     const kospi = items.find(
       (item) => String(item.idxNm ?? "").trim() === "코스피"
     );
     if (kospi && kospi.clpr != null) {
-      return Number(kospi.clpr);
+      return { clpr: Number(kospi.clpr), totalCount: sawTotalCount };
     }
     pageNo++;
   }
 
-  return null;
+  return { clpr: null, totalCount: sawTotalCount };
 }
 
 export async function fetchAllKospiStocks(basDt: string): Promise<StockRow[]> {

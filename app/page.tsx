@@ -58,8 +58,11 @@ export default function Home() {
   }, [snapshot, overrides]);
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-4 px-4 py-6">
-      <header className="flex items-center justify-between gap-3">
+    <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col px-4 pb-6">
+      <header
+        className="sticky top-0 z-10 -mx-4 flex items-center justify-between gap-3 bg-[#F2F4F6]/95 px-4 pb-3 backdrop-blur"
+        style={{ paddingTop: "max(env(safe-area-inset-top), 1.25rem)" }}
+      >
         <div className="min-w-0">
           <h1 className="text-lg font-bold text-[#191F28]">
             코스피 지수 시뮬레이터
@@ -73,53 +76,49 @@ export default function Home() {
         <button
           onClick={fetchSnapshot}
           disabled={loading}
-          className="shrink-0 rounded-full bg-[#3182F6] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition active:scale-95 disabled:opacity-60"
+          className="min-h-11 shrink-0 rounded-full bg-[#3182F6] px-4 text-sm font-semibold text-white shadow-sm transition active:scale-95 disabled:opacity-60"
         >
           {loading ? "불러오는 중…" : snapshot ? "최신화" : "데이터 불러오기"}
         </button>
       </header>
 
-      {error && (
-        <div className="rounded-xl bg-[#FEF0F0] px-4 py-3 text-sm text-[#F04452]">
-          {error}
-        </div>
-      )}
+      <div className="flex flex-1 flex-col gap-4 pt-4">
+        {error && (
+          <div className="rounded-xl bg-[#FEF0F0] px-4 py-3 text-sm text-[#F04452]">
+            {error}
+          </div>
+        )}
 
-      {!snapshot && !loading && (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl bg-white p-10 text-center shadow-sm">
-          <p className="text-sm text-[#8B95A1]">
-            상단 버튼을 눌러 전일 종가 기준 코스피 데이터를 불러오세요.
-          </p>
-        </div>
-      )}
+        {!snapshot && !loading && (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl bg-white p-10 text-center shadow-sm">
+            <p className="text-sm text-[#8B95A1]">
+              상단 버튼을 눌러 전일 종가 기준 코스피 데이터를 불러오세요.
+            </p>
+          </div>
+        )}
 
-      {snapshot && (
-        <>
-          <IndexCard
-            actualIndex={snapshot.actualIndex}
-            simulatedIndex={simulatedIndex}
-            basDt={snapshot.basDt}
-            overrideCount={Object.keys(overrides).length}
-          />
-          <OverridesPanel
-            stocks={snapshot.stocks}
-            overrides={overrides}
-            onChangeOverride={handleChangeOverride}
-            onResetAll={handleResetAll}
-          />
-          <StockExplorer
-            stocks={snapshot.stocks}
-            overrides={overrides}
-            onChangeOverride={handleChangeOverride}
-          />
-        </>
-      )}
-
-      <p className="px-1 pb-4 text-center text-[11px] leading-relaxed text-[#8B95A1]">
-        본 서비스는 전일 종가 데이터를 기반으로 한 교육·시뮬레이션 목적의
-        도구이며, 실제 코스피 지수와 다를 수 있습니다. 투자 판단의 근거로
-        사용할 수 없습니다.
-      </p>
+        {snapshot && (
+          <>
+            <IndexCard
+              actualIndex={snapshot.actualIndex}
+              simulatedIndex={simulatedIndex}
+              basDt={snapshot.basDt}
+              overrideCount={Object.keys(overrides).length}
+            />
+            <OverridesPanel
+              stocks={snapshot.stocks}
+              overrides={overrides}
+              onChangeOverride={handleChangeOverride}
+              onResetAll={handleResetAll}
+            />
+            <StockExplorer
+              stocks={snapshot.stocks}
+              overrides={overrides}
+              onChangeOverride={handleChangeOverride}
+            />
+          </>
+        )}
+      </div>
     </div>
   );
 }
