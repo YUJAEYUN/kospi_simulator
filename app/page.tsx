@@ -118,12 +118,6 @@ export default function Home() {
             />
           </>
         )}
-
-        <p className="px-1 pb-4 text-center text-[11px] leading-relaxed text-[#8B95A1]">
-          본 서비스는 전일 종가 데이터를 기반으로 한 교육·시뮬레이션 목적의
-          도구이며, 실제 코스피 지수와 다를 수 있습니다. 투자 판단의 근거로
-          사용할 수 없습니다.
-        </p>
       </div>
     </div>
   );
