@@ -1,18 +1,16 @@
 "use client";
 
-import { formatBasDt, formatIndex, formatSigned } from "@/lib/format";
+import { formatIndex, formatSigned } from "@/lib/format";
 
 interface Props {
   actualIndex: number;
   simulatedIndex: number;
-  basDt: string;
   overrideCount: number;
 }
 
 export default function IndexCard({
   actualIndex,
   simulatedIndex,
-  basDt,
   overrideCount,
 }: Props) {
   const diff = simulatedIndex - actualIndex;
@@ -29,7 +27,7 @@ export default function IndexCard({
   return (
     <div className="rounded-2xl bg-white p-6 shadow-sm">
       <span className="text-sm font-medium text-[#8B95A1]">
-        실제 코스피 · {formatBasDt(basDt)} 종가 기준
+        실시간 코스피
       </span>
       <div className="mt-1 text-2xl font-bold text-[#191F28]">
         {formatIndex(actualIndex)}

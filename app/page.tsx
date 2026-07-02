@@ -1,49 +1,74 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import IndexCard from "@/components/IndexCard";
 import OverridesPanel from "@/components/OverridesPanel";
 import Spinner from "@/components/Spinner";
 import StockExplorer from "@/components/StockExplorer";
 import type { KospiSnapshot } from "@/lib/kospi";
 import { simulateIndex } from "@/lib/kospi";
-import { formatBasDt, formatTime } from "@/lib/format";
+import { formatTimeWithSeconds } from "@/lib/format";
+
+// Toss's Open API has no push/WebSocket feed, so "real-time" is achieved
+// by polling the snapshot endpoint on an interval.
+const LIVE_POLL_MS = 3_000;
 
 export default function Home() {
   const [snapshot, setSnapshot] = useState<KospiSnapshot | null>(null);
   const [overrides, setOverrides] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Off by default — polling only runs for visitors who explicitly opt in,
+  // so a tab left open in the background doesn't quietly burn through the
+  // hosting plan's request quota.
+  const [liveMode, setLiveMode] = useState(false);
+  const isFetchingRef = useRef(false);
 
-  // `force=false` serves whatever the server already has cached (near
-  // instant, no data.go.kr call) so most visitors never need to press the
-  // button. The refresh button passes force=true to actually re-fetch from
-  // data.go.kr and update that shared cache for everyone.
-  const fetchSnapshot = useCallback(async (force: boolean) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/kospi${force ? "?refresh=1" : ""}`, {
-        cache: "no-store",
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error ?? "데이터를 불러오지 못했습니다.");
+  // `silent` distinguishes background live-price ticks (no spinner, keep
+  // showing the last good snapshot on error) from the initial load (which
+  // shows loading/error state). Overrides are never cleared here — they're
+  // a hypothetical the user is applying on top of whatever the live price
+  // is, so they should survive every tick.
+  const fetchSnapshot = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (isFetchingRef.current) return;
+      isFetchingRef.current = true;
+      if (!silent) {
+        setLoading(true);
+        setError(null);
       }
-      setSnapshot(data as KospiSnapshot);
-      setOverrides({});
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다."
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      try {
+        const res = await fetch("/api/kospi", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error ?? "데이터를 불러오지 못했습니다.");
+        }
+        setSnapshot(data as KospiSnapshot);
+        setError(null);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다."
+        );
+      } finally {
+        if (!silent) setLoading(false);
+        isFetchingRef.current = false;
+      }
+    },
+    []
+  );
 
   useEffect(() => {
-    fetchSnapshot(false);
+    fetchSnapshot();
   }, [fetchSnapshot]);
+
+  useEffect(() => {
+    if (!liveMode) return;
+    fetchSnapshot({ silent: true });
+    const interval = setInterval(() => {
+      fetchSnapshot({ silent: true });
+    }, LIVE_POLL_MS);
+    return () => clearInterval(interval);
+  }, [liveMode, fetchSnapshot]);
 
   const handleChangeOverride = useCallback(
     (code: string, price: number | null) => {
@@ -62,10 +87,9 @@ export default function Home() {
 
   const handleResetAll = useCallback(() => setOverrides({}), []);
 
-  const simulatedIndex = useMemo(() => {
-    if (!snapshot) return 0;
-    return simulateIndex(snapshot.stocks, overrides, snapshot.baseMarketCap)
-      .simulatedIndex;
+  const { simulatedIndex, simulatedTotalMarketCap } = useMemo(() => {
+    if (!snapshot) return { simulatedIndex: 0, simulatedTotalMarketCap: 0 };
+    return simulateIndex(snapshot.stocks, overrides, snapshot.baseMarketCap);
   }, [snapshot, overrides]);
 
   return (
@@ -79,19 +103,38 @@ export default function Home() {
             코스피 지수 시뮬레이터
           </h1>
           <p className="truncate text-xs text-[#8B95A1]">
-            {snapshot
-              ? `${formatBasDt(snapshot.basDt)} 종가 기준 · ${formatTime(snapshot.fetchedAt)} 갱신`
-              : "종목 가격을 바꿔 코스피 변화를 확인해보세요"}
+            {snapshot ? (
+              liveMode ? (
+                <>
+                  <span className="relative -top-px mr-1 inline-block h-1.5 w-1.5 rounded-full bg-[#F04452] align-middle" />
+                  실시간 · {formatTimeWithSeconds(snapshot.fetchedAt)} 갱신
+                </>
+              ) : (
+                `${formatTimeWithSeconds(snapshot.fetchedAt)} 기준 · 새로고침하면 최신화`
+              )
+            ) : (
+              "종목 가격을 바꿔 코스피 변화를 확인해보세요"
+            )}
           </p>
         </div>
-        <button
-          onClick={() => fetchSnapshot(true)}
-          disabled={loading}
-          className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-[#3182F6] px-4 text-sm font-semibold text-white shadow-sm transition active:scale-95 disabled:opacity-60"
-        >
-          {loading && <Spinner className="h-4 w-4" />}
-          {loading ? "불러오는 중…" : snapshot ? "최신화" : "다시 시도"}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-sm font-medium text-[#191F28]">실시간</span>
+          <button
+            role="switch"
+            aria-checked={liveMode}
+            aria-label="실시간 갱신"
+            onClick={() => setLiveMode((v) => !v)}
+            className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${
+              liveMode ? "bg-[#3182F6]" : "bg-[#D1D6DB]"
+            }`}
+          >
+            <span
+              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
+                liveMode ? "translate-x-6" : "translate-x-1"
+              }`}
+            />
+          </button>
+        </div>
       </header>
 
       <div className="flex flex-1 flex-col gap-4 pt-4">
@@ -113,7 +156,8 @@ export default function Home() {
         {!snapshot && !loading && error && (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl bg-white p-10 text-center shadow-sm">
             <p className="text-sm text-[#8B95A1]">
-              데이터를 불러오지 못했습니다. 버튼을 눌러 다시 시도해주세요.
+              데이터를 불러오지 못했습니다. 새로고침하거나 실시간 스위치를
+              켜서 다시 시도해주세요.
             </p>
           </div>
         )}
@@ -123,7 +167,6 @@ export default function Home() {
             <IndexCard
               actualIndex={snapshot.actualIndex}
               simulatedIndex={simulatedIndex}
-              basDt={snapshot.basDt}
               overrideCount={Object.keys(overrides).length}
             />
             <OverridesPanel
@@ -136,6 +179,7 @@ export default function Home() {
               stocks={snapshot.stocks}
               overrides={overrides}
               onChangeOverride={handleChangeOverride}
+              totalMarketCap={simulatedTotalMarketCap}
             />
           </>
         )}

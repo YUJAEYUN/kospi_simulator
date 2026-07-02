@@ -1,81 +1,109 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  DataGoKrError,
-  fetchAllKospiStocks,
-  fetchLatestMarketIndex,
-  type IndexSearchAttempt,
-} from "@/lib/dataGoKr";
-import { calibrateBaseMarketCap, type KospiSnapshot } from "@/lib/kospi";
+import type { StockRow } from "@/lib/dataGoKr";
+import { KOSPI_SEED } from "@/lib/kospiConstituents";
+import type { KospiSnapshot } from "@/lib/kospi";
+import { TossInvestError, fetchLivePrices } from "@/lib/tossInvest";
 
 export const dynamic = "force-dynamic";
 
-type CachedSnapshot = KospiSnapshot & { searchTrail: IndexSearchAttempt[] };
+// How long a poll result is considered fresh before the next incoming
+// request triggers another upstream call. Kept well under the frontend's
+// own poll interval so every visitor's tick actually gets new data, while
+// concurrent visitors within the window still share one upstream call.
+const PRICE_TTL_MS = 2_500;
 
-// In-memory, per-instance cache: once one visitor (or the "최신화" button)
-// pulls fresh data, every other visitor gets served the same snapshot
-// without hitting data.go.kr again. Resets whenever Vercel spins up a new
-// serverless instance (cold start), not just on an explicit restart.
-let cachedSnapshot: CachedSnapshot | null = null;
-let inFlightFetch: Promise<CachedSnapshot> | null = null;
+const codes = KOSPI_SEED.stocks.map((s) => s.code);
+const namesByCode = new Map(KOSPI_SEED.stocks.map((s) => [s.code, s.name]));
+// Share counts come only from the seed (data.go.kr + DART's treasury-share
+// exclusion for common stock, see scripts/seedKospiConstituents.ts) — not
+// refreshed from Toss at runtime, since Toss's `sharesOutstanding` is the
+// gross (treasury-inclusive) figure and would undo that correction.
+const sharesByCode = new Map<string, number>(
+  KOSPI_SEED.stocks.map((s) => [s.code, s.shares])
+);
 
-async function fetchFreshSnapshot(): Promise<CachedSnapshot> {
-  const {
-    basDt,
-    clpr: actualIndex,
-    searchTrail,
-  } = await fetchLatestMarketIndex();
-  const stocks = await fetchAllKospiStocks(basDt);
+const pricesByCode = new Map<string, { price: number; timestamp: string }>();
+let pricesFetchedAt = 0;
+let pricesInFlight: Promise<void> | null = null;
 
-  if (stocks.length === 0) {
-    throw new DataGoKrError(
-      `${basDt} 기준 코스피 종목 데이터를 찾을 수 없습니다.`
-    );
+async function refreshPrices(): Promise<void> {
+  if (Date.now() - pricesFetchedAt < PRICE_TTL_MS) return;
+  if (!pricesInFlight) {
+    pricesInFlight = fetchLivePrices(codes)
+      .then((fresh) => {
+        for (const [code, live] of fresh) {
+          pricesByCode.set(code, live);
+        }
+        pricesFetchedAt = Date.now();
+      })
+      .finally(() => {
+        pricesInFlight = null;
+      });
+  }
+  await pricesInFlight;
+}
+
+// The index value itself is derived from live constituent prices rather
+// than read from a Toss "KOSPI index" endpoint — Toss's Open API doesn't
+// expose one, only per-stock quotes.
+function buildSnapshot(): KospiSnapshot {
+  const stocks: StockRow[] = [];
+  for (const code of codes) {
+    const price = pricesByCode.get(code)?.price;
+    const shares = sharesByCode.get(code) ?? 0;
+    if (!price || price <= 0 || shares <= 0) continue;
+    stocks.push({
+      code,
+      name: namesByCode.get(code) ?? code,
+      price,
+      shares,
+      marketCap: price * shares,
+    });
   }
 
-  const { totalMarketCap, baseMarketCap } = calibrateBaseMarketCap(
-    actualIndex,
-    stocks
-  );
+  const totalMarketCap = stocks.reduce((sum, s) => sum + s.marketCap, 0);
+  const actualIndex =
+    KOSPI_SEED.baseMarketCap > 0
+      ? (totalMarketCap / KOSPI_SEED.baseMarketCap) * 100
+      : 0;
 
   return {
-    basDt,
+    basDt: KOSPI_SEED.basDt,
     actualIndex,
     totalMarketCap,
-    baseMarketCap,
+    baseMarketCap: KOSPI_SEED.baseMarketCap,
     stocks,
     fetchedAt: new Date().toISOString(),
-    searchTrail,
   };
 }
 
-// Coalesces concurrent misses (e.g. several visitors landing right after a
-// cold start) into a single upstream call instead of one each.
-async function getSnapshot(forceRefresh: boolean): Promise<CachedSnapshot> {
-  if (!forceRefresh && cachedSnapshot) {
-    return cachedSnapshot;
-  }
-  if (!inFlightFetch) {
-    inFlightFetch = fetchFreshSnapshot()
-      .then((snapshot) => {
-        cachedSnapshot = snapshot;
-        return snapshot;
-      })
-      .finally(() => {
-        inFlightFetch = null;
-      });
-  }
-  return inFlightFetch;
-}
-
 export async function GET(request: NextRequest) {
-  const forceRefresh = request.nextUrl.searchParams.get("refresh") === "1";
-  try {
-    const snapshot = await getSnapshot(forceRefresh);
-    return NextResponse.json(snapshot);
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.";
-    const status = error instanceof DataGoKrError ? 502 : 500;
-    return NextResponse.json({ error: message }, { status });
+  if (codes.length === 0) {
+    return NextResponse.json(
+      {
+        error:
+          "코스피 구성종목 데이터가 없습니다. `npm run seed:kospi`를 먼저 실행해주세요.",
+      },
+      { status: 500 }
+    );
   }
+
+  if (request.nextUrl.searchParams.get("refresh") === "1") {
+    pricesFetchedAt = 0;
+  }
+
+  try {
+    await refreshPrices();
+  } catch (error) {
+    if (pricesByCode.size === 0) {
+      const message =
+        error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.";
+      const status = error instanceof TossInvestError ? 502 : 500;
+      return NextResponse.json({ error: message }, { status });
+    }
+    // A previous poll already populated pricesByCode — keep serving that
+    // instead of failing the request over one missed tick.
+  }
+
+  return NextResponse.json(buildSnapshot());
 }

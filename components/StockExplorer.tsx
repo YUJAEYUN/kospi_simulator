@@ -3,11 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { StockRow } from "@/lib/dataGoKr";
 import { formatPrice, formatWon } from "@/lib/format";
+import { stockLogoUrl } from "@/lib/logo";
 
 interface Props {
   stocks: StockRow[];
   overrides: Record<string, number>;
   onChangeOverride: (code: string, price: number | null) => void;
+  totalMarketCap: number;
 }
 
 const PAGE_SIZE = 30;
@@ -16,6 +18,7 @@ export default function StockExplorer({
   stocks,
   overrides,
   onChangeOverride,
+  totalMarketCap,
 }: Props) {
   const [query, setQuery] = useState("");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -89,6 +92,7 @@ export default function StockExplorer({
             stock={stock}
             overridePrice={overrides[stock.code] ?? null}
             onChange={(price) => onChangeOverride(stock.code, price)}
+            totalMarketCap={totalMarketCap}
           />
         ))}
       </ul>
@@ -109,15 +113,32 @@ function StockRowItem({
   stock,
   overridePrice,
   onChange,
+  totalMarketCap,
 }: {
   stock: StockRow;
   overridePrice: number | null;
   onChange: (price: number | null) => void;
+  totalMarketCap: number;
 }) {
   const [draft, setDraft] = useState<string>(
     overridePrice != null ? String(overridePrice) : ""
   );
   const [editing, setEditing] = useState(false);
+
+  // Briefly tints the row red/blue when a live poll moves this stock's
+  // price, then fades back out — a visual cue that this row is actually
+  // ticking, not just a static table.
+  const prevPriceRef = useRef(stock.price);
+  const [flash, setFlash] = useState<"up" | "down" | null>(null);
+
+  useEffect(() => {
+    const prev = prevPriceRef.current;
+    prevPriceRef.current = stock.price;
+    if (stock.price === prev) return;
+    setFlash(stock.price > prev ? "up" : "down");
+    const timer = setTimeout(() => setFlash(null), 600);
+    return () => clearTimeout(timer);
+  }, [stock.price]);
 
   const isOverridden = overridePrice != null;
   const effectivePrice = overridePrice ?? stock.price;
@@ -128,6 +149,8 @@ function StockRowItem({
     stock.price !== 0
       ? ((effectivePrice - stock.price) / stock.price) * 100
       : 0;
+  const weightPct =
+    totalMarketCap !== 0 ? (effectiveMarketCap / totalMarketCap) * 100 : 0;
 
   function commit() {
     const parsed = Number(draft.replace(/,/g, ""));
@@ -143,7 +166,16 @@ function StockRowItem({
   }
 
   return (
-    <li className="flex items-center gap-3 py-3">
+    <li
+      className={`flex items-center gap-3 rounded-lg py-3 transition-colors duration-700 ${
+        flash === "up"
+          ? "bg-[#FDEDED]"
+          : flash === "down"
+            ? "bg-[#EAF2FE]"
+            : "bg-transparent"
+      }`}
+    >
+      <StockLogo code={stock.code} name={stock.name} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold text-[#191F28]">
           {stock.name}
@@ -199,6 +231,10 @@ function StockRowItem({
           </button>
         )}
 
+        <p className="pr-2 text-[11px] text-[#8B95A1]">
+          비중 {weightPct.toFixed(2)}%
+        </p>
+
         {isOverridden && (
           <div className="flex items-center gap-1.5 text-xs">
             <span
@@ -219,5 +255,30 @@ function StockRowItem({
         )}
       </div>
     </li>
+  );
+}
+
+function StockLogo({ code, name }: { code: string; name: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return (
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F2F4F6] text-xs font-semibold text-[#8B95A1]">
+        {name.slice(0, 1)}
+      </div>
+    );
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- external, per-stock icon; not worth Next's image optimizer
+    <img
+      src={stockLogoUrl(code)}
+      alt=""
+      width={36}
+      height={36}
+      className="h-9 w-9 shrink-0 rounded-full bg-[#F2F4F6] object-contain p-1"
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
   );
 }

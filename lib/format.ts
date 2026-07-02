@@ -33,6 +33,14 @@ export function formatTime(iso: string): string {
   });
 }
 
+export function formatTimeWithSeconds(iso: string): string {
+  return new Date(iso).toLocaleTimeString("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 export function formatSigned(value: number, decimals = 2): string {
   const sign = value > 0 ? "+" : value < 0 ? "-" : "";
   return `${sign}${Math.abs(value).toLocaleString("ko-KR", {
