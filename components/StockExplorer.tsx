@@ -121,6 +121,9 @@ function StockRowItem({
 
   const isOverridden = overridePrice != null;
   const effectivePrice = overridePrice ?? stock.price;
+  const effectiveMarketCap = isOverridden
+    ? effectivePrice * stock.shares
+    : stock.marketCap;
   const diffPct =
     stock.price !== 0
       ? ((effectivePrice - stock.price) / stock.price) * 100
@@ -146,7 +149,19 @@ function StockRowItem({
           {stock.name}
         </p>
         <p className="text-xs text-[#8B95A1]">
-          {stock.code} · 시총 {formatWon(stock.marketCap)}
+          {stock.code} · 시총{" "}
+          {isOverridden ? (
+            <>
+              <span className="line-through">
+                {formatWon(stock.marketCap)}
+              </span>{" "}
+              <span className="font-semibold text-[#1B64DA]">
+                → {formatWon(effectiveMarketCap)}
+              </span>
+            </>
+          ) : (
+            formatWon(stock.marketCap)
+          )}
         </p>
       </div>
 
