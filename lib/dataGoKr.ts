@@ -5,6 +5,7 @@ const MARKET_INDEX_URL =
 
 const PAGE_SIZE = 999;
 const MAX_PAGES = 8;
+const MAX_INDEX_PAGES = 5;
 const MAX_DATE_LOOKBACK_DAYS = 10;
 
 export class DataGoKrError extends Error {}
@@ -105,21 +106,43 @@ export async function fetchLatestMarketIndex(): Promise<{
     day.setDate(day.getDate() - offset);
     const basDt = formatBasDt(day);
 
-    const { items } = await callDataGoKr(MARKET_INDEX_URL, {
-      basDt,
-      numOfRows: "100",
-      pageNo: "1",
-    });
-
-    const kospi = items.find((item) => item.idxNm === "코스피");
-    if (kospi && kospi.clpr != null) {
-      return { basDt, clpr: Number(kospi.clpr) };
+    const clpr = await findKospiIndexOnDate(basDt);
+    if (clpr != null) {
+      return { basDt, clpr };
     }
   }
 
   throw new DataGoKrError(
     `최근 ${MAX_DATE_LOOKBACK_DAYS}일 내 코스피 지수 데이터를 찾을 수 없습니다.`
   );
+}
+
+// GetMarketIndexInfoService returns every KRX index for the date (KOSPI,
+// KOSDAQ, sector/style indices, ...), not just KOSPI, so the composite
+// index row can be well past the first page.
+async function findKospiIndexOnDate(basDt: string): Promise<number | null> {
+  let pageNo = 1;
+  let totalCount = Infinity;
+
+  while ((pageNo - 1) * PAGE_SIZE < totalCount && pageNo <= MAX_INDEX_PAGES) {
+    const { items, totalCount: tc } = await callDataGoKr(MARKET_INDEX_URL, {
+      basDt,
+      numOfRows: String(PAGE_SIZE),
+      pageNo: String(pageNo),
+    });
+    totalCount = tc;
+    if (items.length === 0) break;
+
+    const kospi = items.find(
+      (item) => String(item.idxNm ?? "").trim() === "코스피"
+    );
+    if (kospi && kospi.clpr != null) {
+      return Number(kospi.clpr);
+    }
+    pageNo++;
+  }
+
+  return null;
 }
 
 export async function fetchAllKospiStocks(basDt: string): Promise<StockRow[]> {
